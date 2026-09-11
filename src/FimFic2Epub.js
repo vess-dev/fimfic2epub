@@ -10,8 +10,9 @@ import EventEmitter from 'events'
 import { buf as crc32 } from 'crc-32'
 
 import { cleanMarkup } from './cleanMarkup'
-import fetch from './fetch'
+import fetch, { configureFetch, CloudflareChallengeError } from './fetch'
 import fetchRemote from './fetchRemote'
+import { fetchStoryV2, requestToken, FimfictionApiError } from './apiv2'
 import imageSize from './imageSize'
 import * as template from './templates'
 import { styleCss, coverstyleCss, titlestyleCss, iconsCss, navstyleCss, paragraphsCss } from './styles'
@@ -43,43 +44,37 @@ class FimFic2Epub extends EventEmitter {
     return sanitize(storyInfo.author.name + ' - ' + storyInfo.title + '.epub')
   }
 
-  static fetchStoryInfo (storyId, raw = false) {
-    return new Promise((resolve, reject) => {
-      storyId = FimFic2Epub.getStoryId(storyId)
-      const url = '/api/story.php?story=' + storyId
-      fetch(url).then((content) => {
-        let data
-        try {
-          data = JSON.parse(content)
-        } catch (e) {}
-        if (!data) {
-          reject(new Error('Unable to fetch story info'))
-          return
-        }
-        if (data.error) {
-          reject(new Error(data.error + ' (id: ' + storyId + ')'))
-          return
-        }
-        const story = data.story
-        if (raw) {
-          resolve(story)
-          return
-        }
-        // this is so the metadata can be cached.
-        if (!story.chapters) story.chapters = []
-        delete story.likes
-        delete story.dislikes
-        delete story.views
-        delete story.total_views
-        delete story.comments
-        story.chapters.forEach((ch) => {
-          delete ch.views
-        })
-        // Add version number
-        story.FIMFIC2EPUB_VERSION = FIMFIC2EPUB_VERSION
-        resolve(story)
-      })
+  static async fetchStoryInfo (storyId, raw = false) {
+    storyId = FimFic2Epub.getStoryId(storyId)
+    const url = '/api/story.php?story=' + storyId
+    const content = await fetch(url)
+    let data
+    try {
+      data = JSON.parse(content)
+    } catch (e) {}
+    if (!data) {
+      throw new Error('Unable to fetch story info')
+    }
+    if (data.error) {
+      throw new Error(data.error + ' (id: ' + storyId + ')')
+    }
+    const story = data.story
+    if (raw) {
+      return story
+    }
+    // this is so the metadata can be cached.
+    if (!story.chapters) story.chapters = []
+    delete story.likes
+    delete story.dislikes
+    delete story.views
+    delete story.total_views
+    delete story.comments
+    story.chapters.forEach((ch) => {
+      delete ch.views
     })
+    // Add version number
+    story.FIMFIC2EPUB_VERSION = FIMFIC2EPUB_VERSION
+    return story
   }
 
   constructor (storyId, options = {}) {
@@ -103,7 +98,8 @@ class FimFic2Epub extends EventEmitter {
       calculateReadingEase: true,
       readingEaseWakeupInterval: isNode ? 50 : 200, // lower for node, to not slow down thread
       wordsPerMinute: 200, // 0 to disable
-      addChapterBars: true
+      addChapterBars: true,
+      apiToken: null // Fimfiction API v2 bearer token, used instead of scraping the website
     }
 
     this.options = Object.assign(this.defaultOptions, options)
@@ -121,6 +117,7 @@ class FimFic2Epub extends EventEmitter {
     this.description = ''
     this.subjects = []
     this.chapters = []
+    this.apiChapters = null // chapter contents fetched through the API
     this.chaptersHtml = []
     this.notesHtml = []
     this.hasAuthorNotes = false
@@ -180,21 +177,9 @@ class FimFic2Epub extends EventEmitter {
     this.description = ''
     this.subjects = []
 
-    this.progress(0, 0, 'Fetching metadata...')
+    const source = this.options.apiToken ? this.fetchMetadataFromApi() : this.fetchMetadataFromWebsite()
 
-    this.pcache.metadata = FimFic2Epub.fetchStoryInfo(this.storyId)
-      .then((storyInfo) => {
-        this.storyInfo = storyInfo
-        this.storyInfo.uuid = 'urn:fimfiction:' + this.storyInfo.id
-        this.filename = FimFic2Epub.getFilename(this.storyInfo)
-        this.storyInfo.chapters.forEach((chapter) => {
-          if (chapter.date_modified > this.storyInfo.date_modified) {
-            this.storyInfo.date_modified = chapter.date_modified
-          }
-        })
-        this.progress(0, 0.5)
-      })
-      .then(this.fetchTitlePage.bind(this))
+    this.pcache.metadata = source
       .then(() => {
         this.progress(0, 1)
       })
@@ -204,6 +189,53 @@ class FimFic2Epub extends EventEmitter {
         this.pcache.metadata = null
       })
     return this.pcache.metadata
+  }
+
+  // Legacy path: public v1 API for the metadata, story page for the rest.
+  fetchMetadataFromWebsite () {
+    this.progress(0, 0, 'Fetching metadata...')
+    return FimFic2Epub.fetchStoryInfo(this.storyId)
+      .then((storyInfo) => {
+        this.applyStoryInfo(storyInfo)
+        this.progress(0, 0.5)
+      })
+      .then(this.fetchTitlePage.bind(this))
+  }
+
+  // API v2 path: everything (including chapter contents) comes from the API.
+  async fetchMetadataFromApi () {
+    this.progress(0, 0, 'Fetching metadata from the Fimfiction API...')
+    const story = await fetchStoryV2(this.storyId, this.options.apiToken)
+    this.apiChapters = story.chapters.map((ch) => ({
+      content: ch.content || '',
+      notes: ch.notes || '',
+      notesFirst: !!ch.notesFirst
+    }))
+    story.chapters = story.chapters.map((ch) => ({
+      id: ch.id,
+      title: ch.title,
+      link: ch.link,
+      date_modified: ch.date_modified,
+      words: ch.words
+    }))
+    this.tags = story.tags
+    delete story.tags
+    this.description = story.description
+    story.description = ''
+    story.FIMFIC2EPUB_VERSION = FIMFIC2EPUB_VERSION
+    this.subjects = ['Fimfiction', story.content_rating_text].concat(this.tags.map((tag) => tag.name))
+    this.applyStoryInfo(story)
+  }
+
+  applyStoryInfo (storyInfo) {
+    this.storyInfo = storyInfo
+    this.storyInfo.uuid = 'urn:fimfiction:' + this.storyInfo.id
+    this.filename = FimFic2Epub.getFilename(this.storyInfo)
+    this.storyInfo.chapters.forEach((chapter) => {
+      if (chapter.date_modified > this.storyInfo.date_modified) {
+        this.storyInfo.date_modified = chapter.date_modified
+      }
+    })
   }
 
   fetchChapters () {
@@ -221,54 +253,27 @@ class FimFic2Epub extends EventEmitter {
 
     this.progress(0, 0, 'Fetching chapters...')
 
-    const chapterCount = this.storyInfo.chapters.length
-    const url = '/story/download/' + this.storyInfo.id + '/html'
+    let source
+    if (this.apiChapters) {
+      source = Promise.resolve(this.apiChapters)
+    } else {
+      const url = '/story/download/' + this.storyInfo.id + '/html'
+      source = fetch(url).then((html) => this.parseChaptersDownload(html))
+    }
 
-    this.pcache.chapters = fetch(url).then((html) => {
-      let p = Promise.resolve()
-      const matchChapter = /<article class="chapter">[\s\S]*?<\/header>([\s\S]*?)<\/article>/g
-      for (let ma, i = 0; (ma = matchChapter.exec(html)); i++) {
-        const ch = this.storyInfo.chapters[i]
-        let chapterContent = ma[1]
-        chapterContent = chapterContent.replace(/<footer>[\s\S]*?<\/footer>/g, '').trim()
-
-        const authorNotesPos = chapterContent.indexOf('<aside ')
-        let notesContent = ''
-        const notesFirst = authorNotesPos === 0
-        if (authorNotesPos !== -1) {
-          chapterContent = chapterContent.replace(/<aside class="authors-note">([\s\S]*?)<\/aside>/, (match, content, pos) => {
-            content = content.replace(/<header><h1>.*?<\/h1><\/header>/, '')
-            notesContent = content.trim().replace(trimWhitespace, '')
-            return ''
-          })
-        }
-
-        chapterContent = chapterContent.trim().replace(trimWhitespace, '')
-        const chapter = { content: chapterContent, notes: notesContent, notesFirst }
-        ch.realWordCount = utils.htmlWordCount(chapter.content)
-
-        p = p.then(() => cleanMarkup(chapter.content).then((content) => {
-          chapter.content = content
-        }))
-        if (chapter.notes) {
-          p = p.then(() => cleanMarkup(notesContent).then((notes) => {
-            if (!notes) {
-              console.log('error notes:', i, notesContent)
-            }
-            chapter.notes = notes
-          }))
-        }
-        p = p.then(() => {
-          this.progress(0, (i + 1) / chapterCount, 'Parsed chapter ' + (i + 1) + ' / ' + chapterCount)
-          if (chapter.notes) {
-            this.hasAuthorNotes = true
-            this.chaptersWithNotes.push(i)
-          }
-          this.chapters[i] = chapter
-          return utils.sleep(0)
-        })
+    this.pcache.chapters = source.then((rawChapters) => {
+      const listed = this.storyInfo.chapters.length
+      if (rawChapters.length === 0 && listed > 0) {
+        throw new Error('No chapter contents could be extracted for story ' + this.storyInfo.id + '. ' +
+          'Fimfiction may have changed its story download format, or the download was blocked.')
       }
-      return p
+      if (rawChapters.length !== listed) {
+        console.warn('Story lists ' + listed + ' chapters but ' + rawChapters.length + ' chapters were downloaded')
+        const count = Math.min(rawChapters.length, listed)
+        rawChapters.length = count
+        this.storyInfo.chapters.length = count
+      }
+      return this.processChapters(rawChapters)
     }).then(() => {
       this.totalWordCount = this.storyInfo.chapters.reduce((count, ch) => count + ch.realWordCount, 0)
       this.pcache.chapters = null
@@ -277,6 +282,68 @@ class FimFic2Epub extends EventEmitter {
     })
 
     return this.pcache.chapters
+  }
+
+  // Splits the "Download story (html)" page into raw chapter objects
+  parseChaptersDownload (html) {
+    const rawChapters = []
+    const matchChapter = /<article class="chapter">[\s\S]*?<\/header>([\s\S]*?)<\/article>/g
+    for (let ma; (ma = matchChapter.exec(html));) {
+      let chapterContent = ma[1]
+      chapterContent = chapterContent.replace(/<footer>[\s\S]*?<\/footer>/g, '').trim()
+
+      const authorNotesPos = chapterContent.indexOf('<aside ')
+      let notesContent = ''
+      const notesFirst = authorNotesPos === 0
+      if (authorNotesPos !== -1) {
+        chapterContent = chapterContent.replace(/<aside class="authors-note">([\s\S]*?)<\/aside>/, (match, content, pos) => {
+          content = content.replace(/<header><h1>.*?<\/h1><\/header>/, '')
+          notesContent = content.trim().replace(trimWhitespace, '')
+          return ''
+        })
+      }
+
+      chapterContent = chapterContent.trim().replace(trimWhitespace, '')
+      rawChapters.push({ content: chapterContent, notes: notesContent, notesFirst })
+    }
+    return rawChapters
+  }
+
+  processChapters (rawChapters) {
+    const chapterCount = rawChapters.length
+    let p = Promise.resolve()
+    rawChapters.forEach((raw, i) => {
+      const ch = this.storyInfo.chapters[i]
+      const chapter = {
+        content: (raw.content || '').trim().replace(trimWhitespace, ''),
+        notes: (raw.notes || '').trim().replace(trimWhitespace, ''),
+        notesFirst: !!raw.notesFirst
+      }
+      ch.realWordCount = utils.htmlWordCount(chapter.content)
+
+      p = p.then(() => cleanMarkup(chapter.content).then((content) => {
+        chapter.content = content
+      }))
+      if (chapter.notes) {
+        const notesContent = chapter.notes
+        p = p.then(() => cleanMarkup(notesContent).then((notes) => {
+          if (!notes) {
+            console.log('error notes:', i, notesContent)
+          }
+          chapter.notes = notes
+        }))
+      }
+      p = p.then(() => {
+        this.progress(0, (i + 1) / chapterCount, 'Parsed chapter ' + (i + 1) + ' / ' + chapterCount)
+        if (chapter.notes) {
+          this.hasAuthorNotes = true
+          this.chaptersWithNotes.push(i)
+        }
+        this.chapters[i] = chapter
+        return utils.sleep(0)
+      })
+    })
+    return p
   }
 
   fetchRemoteFiles () {
@@ -846,31 +913,6 @@ class FimFic2Epub extends EventEmitter {
     html = html.substring(0, html.indexOf('<div class="button-group"'))
   }
 
-  parseChapterPage (html) {
-    const trimWhitespace = /^\s*(<br\s*\/?\s*>)+|(<br\s*\/?\s*>)+\s*$/ig
-
-    let authorNotesPos = html.indexOf('<div class="authors-note"')
-    let authorNotes = ''
-    if (authorNotesPos !== -1) {
-      authorNotesPos = authorNotesPos + html.substring(authorNotesPos).indexOf('<b>Author\'s Note:</b>')
-      authorNotes = html.substring(authorNotesPos + 22)
-      authorNotes = authorNotes.substring(0, authorNotes.indexOf('\t\n\t</div>'))
-      authorNotes = authorNotes.trim()
-      authorNotes = authorNotes.replace(trimWhitespace, '')
-    }
-
-    const chapterPos = html.indexOf('<div class="bbcode">')
-    let chapter = html.substring(chapterPos + 20)
-
-    const pos = chapter.indexOf('\t\t</div>\n\t</div>\t\t\n\t\t\t\t\t</div>\n')
-
-    chapter = chapter.substring(0, pos).trim()
-
-    // remove leading and trailing <br /> tags and whitespace
-    chapter = chapter.replace(trimWhitespace, '')
-    return { content: chapter, notes: authorNotes, notesFirst: authorNotesPos < chapterPos }
-  }
-
   replaceRemoteResources () {
     if (this.remoteResources.size === 0) return
     if (!this.options.includeExternal) {
@@ -913,5 +955,11 @@ class FimFic2Epub extends EventEmitter {
     }
   }
 }
+
+// Helpers exposed for the command line tool and other embedders
+FimFic2Epub.configureFetch = configureFetch
+FimFic2Epub.requestApiToken = requestToken
+FimFic2Epub.CloudflareChallengeError = CloudflareChallengeError
+FimFic2Epub.FimfictionApiError = FimfictionApiError
 
 export default FimFic2Epub

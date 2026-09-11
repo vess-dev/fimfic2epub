@@ -1,3 +1,5 @@
+THIS EXTENSION HAS BEEN MAINTAINED WITH AI SLOP. YOU HAVE BEEN WARNED.
+
 [![NPM](https://nodei.co/npm/fimfic2epub.png?compact=true)](https://www.npmjs.com/package/fimfic2epub)
 
 ![fimfic2epub logo](https://github.com/daniel-j/fimfic2epub/raw/master/assets/fimfic2epub-logo.png)

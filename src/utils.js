@@ -1,8 +1,7 @@
-
-import htmlToTextModule from 'html-to-text'
+import { convert as convertHtmlToText } from 'html-to-text'
 import urlRegexSafe from 'url-regex-safe'
 import matchWords from 'match-words'
-import syllable from 'syllable'
+import { syllable } from 'syllable'
 import typogr from 'typogr'
 import { unicode } from './constants'
 
@@ -40,16 +39,18 @@ export function sleep (ms) {
 export function htmlToText (html, options = {}) {
   options = Object.assign({
     wordwrap: false,
-    ignoreImage: true,
-    ignoreHref: true
+    selectors: [
+      { selector: 'img', format: 'skip' },
+      { selector: 'a', options: { ignoreHref: true } }
+    ]
   }, options)
-  return htmlToTextModule.fromString(html, options)
+  return convertHtmlToText(html || '', options)
 }
 
 export function htmlWordCount (html) {
   html = html.replace(/<pre>.*?<\/pre>/g, '') // Ignore codeblocks
   let text = htmlToText(html)
-  text = text.replace(urlRegexSafe({ tlds: [] }), '') // Remove urls
+  text = text.replace(urlRegexSafe(), '') // Remove urls
 
   let count = 0
   try {

@@ -1,7 +1,6 @@
-
-import m from 'mithril'
+import m from 'mithril/hyperscript'
 import { decode } from 'html-entities'
-import twemoji from 'twemoji'
+import twemoji from '@twemoji/api'
 import render from 'mithril-node-render'
 
 import fetchRemote from './fetchRemote'
@@ -15,7 +14,8 @@ export async function cleanMarkup (html) {
 
   html = html.normalize('NFC') // normalize unicode
 
-  html = twemoji.parse(html, { ext: '.svg', folder: 'svg' })
+  // Twemoji graphics are fetched from jsDelivr (the old MaxCDN host is gone, see issue #68 / PR #69)
+  html = twemoji.parse(html, { base: twemoji.base, ext: '.svg', folder: 'svg' })
 
   // replace HTML entities with decimal entities
   /* eslint-disable no-control-regex */

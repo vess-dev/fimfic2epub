@@ -8,9 +8,19 @@
     "type": "git",
     "url": "git+https://github.com/daniel-j/fimfic2epub.git"
   },
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
-    "build": "gulp",
-    "dev": "NODE_ENV=development gulp"
+    "build": "NODE_ENV=production gulp",
+    "dev": "NODE_ENV=development gulp",
+    "watch": "NODE_ENV=development gulp watch",
+    "pack": "gulp pack",
+    "lint": "standard",
+    "test": "node test/run-tests.js",
+    "build:standalone": "NODE_ENV=production gulp --standalone",
+    "test:e2e": "node test/e2e-node.js",
+    "test:browser": "node test/browser/run.js"
   },
   "bin": {
     "fimfic2epub": "build/fimfic2epub"
@@ -22,79 +32,77 @@
     "LICENSE"
   ],
   "dependencies": {
-    "canvas": "^2.11.2",
-    "commander": "^7.2.0",
+    "@twemoji/api": "^17.0.3",
+    "commander": "^15.0.0",
     "crc-32": "^1.2.2",
     "detect-node": "^2.1.0",
     "elementtree": "^0.1.7",
-    "escape-string-regexp": "^4.0.0",
-    "file-type": "^16.4.0",
-    "fonteditor-core": "2.1.2",
-    "html-entities": "^2.3.2",
-    "html-to-text": "^7.1.1",
-    "image-size": "^1.0.0",
-    "is-svg": "^4.3.1",
-    "jszip": "^3.6.0",
+    "escape-string-regexp": "^5.0.0",
+    "file-type": "^22.1.0",
+    "fonteditor-core": "^2.6.3",
+    "html-entities": "^2.6.0",
+    "html-to-text": "^10.0.1",
+    "is-svg": "^6.1.0",
+    "jszip": "^3.10.1",
     "match-words": "^1.0.0",
-    "mithril": "^1.1.6",
-    "mithril-node-render": "^2.3.2",
-    "node-fetch": "^2.6.1",
+    "mithril": "^2.3.8",
+    "mithril-node-render": "^3.0.2",
     "pretty-data": "^0.40.0",
     "sanitize-filename": "^1.6.3",
-    "syllable": "^4.1.0",
-    "twemoji": "^14.0.2",
+    "syllable": "^5.0.1",
     "typogr": "^0.6.8",
-    "url-regex-safe": "^2.0.2",
+    "url-regex-safe": "^4.0.0",
     "zero-fill": "^2.2.4"
   },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "^1.0.9"
+  },
   "devDependencies": {
-    "@babel/core": "^7.24.0",
-    "@babel/preset-env": "^7.24.0",
-    "@babel/register": "^7.23.7",
+    "@babel/core": "^8.0.5",
+    "@babel/preset-env": "^8.0.5",
+    "@babel/register": "^8.0.5",
     "assert": "^2.1.0",
-    "autosize": "^4.0.4",
-    "babel-loader": "^8.2.2",
+    "autosize": "^6.0.1",
+    "babel-loader": "^10.1.1",
     "binary-loader": "0.0.1",
     "browserify-zlib": "^0.2.0",
     "buffer": "^6.0.3",
-    "del": "^6.0.0",
-    "exports-loader": "^3.0.0",
-    "fancy-log": "^1.3.3",
+    "events": "^3.3.0",
+    "fancy-log": "^2.0.0",
     "file-saver": "^2.0.5",
     "font-awesome": "4.7.0",
-    "gulp": "^4.0.2",
+    "gulp": "^5.0.1",
     "gulp-change": "^1.0.2",
-    "gulp-chmod": "^3.0.0",
-    "gulp-filter": "^7.0.0",
-    "gulp-header": "^2.0.9",
-    "gulp-json-editor": "^2.5.6",
-    "gulp-rename": "^2.0.0",
-    "gulp-standard": "^14.0.0",
-    "gulp-watch": "^5.0.1",
-    "gulp-zip": "^5.1.0",
-    "node-loader": "^2.0.0",
-    "path-browserify": "^1.0.1",
-    "plugin-error": "^1.0.1",
+    "gulp-chmod": "^4.0.0",
+    "gulp-filter": "^10.0.0",
+    "gulp-header": "^2.0.12",
+    "gulp-json-editor": "^2.6.0",
+    "gulp-rename": "^2.1.0",
+    "gulp-zip": "^6.1.0",
+    "node-loader": "^2.1.0",
+    "plugin-error": "^2.0.1",
     "process": "^0.11.10",
-    "raw-loader": "^4.0.2",
-    "regenerator-runtime": "^0.13.7",
-    "removeNPMAbsolutePaths": "^2.0.0",
-    "standard": "^16.0.3",
+    "removeNPMAbsolutePaths": "^3.0.1",
+    "standard": "^17.1.2",
     "stream-browserify": "^3.0.0",
-    "stylus": "^0.54.8",
-    "stylus-loader": "^6.0.0",
-    "webpack": "^5.90.3",
+    "stylus": "^0.64.0",
+    "stylus-loader": "^9.0.0",
+    "webpack": "^5.110.3",
     "webpack-node-externals": "^3.0.0"
   },
   "standard": {
-    "env": {
-      "browser": true
-    },
+    "env": [
+      "browser",
+      "node",
+      "webextensions"
+    ],
     "globals": [
       "FIMFIC2EPUB_VERSION"
+    ],
+    "ignore": [
+      "build/",
+      "dist/",
+      "extension/build/"
     ]
-  },
-  "overrides": {
-    "graceful-fs": "^4.2.11"
   }
 }

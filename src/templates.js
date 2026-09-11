@@ -1,5 +1,4 @@
-
-import m from 'mithril'
+import m from 'mithril/hyperscript'
 import render from 'mithril-node-render'
 import { pd as pretty } from 'pretty-data'
 import zeroFill from 'zero-fill'

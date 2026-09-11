@@ -1,36 +1,29 @@
-
 import isNode from 'detect-node'
 import { Font } from 'fonteditor-core'
-import fs from 'fs'
-import fetch from './fetch'
-import FileType from 'file-type'
 
-async function subsetFont (fontPath, glyphs, options = {}) {
-  let data
-  const fontdata = Buffer.from(fontPath, 'binary')
-  const type = await FileType.fromBuffer(fontdata)
-  if (type && type.mime === 'font/ttf') {
-    data = fontdata.buffer
+// Creates a TTF font containing only the given glyphs (unicode code points).
+// fontData is the TTF file as a binary string (webpack's binary-loader),
+// Buffer, ArrayBuffer or Uint8Array.
+export default function subsetFont (fontData, glyphs) {
+  let buffer
+  if (typeof fontData === 'string') {
+    buffer = Buffer.from(fontData, 'binary')
+  } else if (fontData instanceof ArrayBuffer) {
+    buffer = Buffer.from(fontData)
   } else {
-    if (!isNode || !options.local) {
-      data = await fetch(fontPath, 'arraybuffer')
-    } else {
-      data = await new Promise((resolve, reject) => {
-        fs.readFile(fontPath, (err, data) => {
-          if (err) reject(err)
-          else resolve(data)
-        })
-      })
-    }
+    buffer = Buffer.from(fontData.buffer, fontData.byteOffset, fontData.byteLength)
   }
-  return Font.create(data, {
+  // fonteditor-core wants a plain ArrayBuffer (a Node Buffer is fine, but the
+  // browser polyfill isn't)
+  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+  const font = Font.create(arrayBuffer, {
     type: 'ttf',
     subset: glyphs,
     hinting: true
-  }).write({
+  })
+  return font.write({
     type: 'ttf',
-    hinting: true
+    hinting: true,
+    toBuffer: isNode
   })
 }
-
-export default subsetFont

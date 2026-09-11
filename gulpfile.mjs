@@ -1,55 +1,44 @@
+import fs from 'node:fs'
+import { createRequire } from 'node:module'
 
 // gulp and utilities
 import gulp from 'gulp'
-import del from 'del'
-import watch from 'gulp-watch'
 import filter from 'gulp-filter'
 import change from 'gulp-change'
 import rename from 'gulp-rename'
 import header from 'gulp-header'
 import chmod from 'gulp-chmod'
-import PluginError from 'plugin-error'
-import log from 'fancy-log'
-
 import jsonedit from 'gulp-json-editor'
 import zip from 'gulp-zip'
+import PluginError from 'plugin-error'
+import log from 'fancy-log'
 import removeNPMAbsolutePaths from 'removeNPMAbsolutePaths'
 
 // script
-import standard from 'gulp-standard'
 import webpack from 'webpack'
-import webpackConfig from './webpack.config.js'
+import webpackConfigs from './webpack.config.mjs'
 
-const inProduction = process.env.NODE_ENV === 'production' || process.argv.indexOf('-p') !== -1
+const require = createRequire(import.meta.url)
 
+const inProduction = process.env.NODE_ENV === 'production' || process.argv.includes('-p')
 const isStandalone = process.argv.includes('--standalone')
 
-if (isStandalone) {
-  webpackConfig.shift()
-  webpackConfig.shift()
-  webpackConfig.shift()
-} else {
-  webpackConfig.pop()
+const webpackConfig = isStandalone
+  ? webpackConfigs.filter((c) => c.name === 'standalone')
+  : webpackConfigs.filter((c) => c.name !== 'standalone')
+
+function readPackageVersion () {
+  return JSON.parse(fs.readFileSync('./package.json', 'utf8')).version
 }
 
-const watchOpts = {
-  readDelay: 500,
-  verbose: true,
-  read: false
-}
-
-let packageVersion = require('./package.json').version
+let packageVersion = readPackageVersion()
 
 const webpackDefines = new webpack.DefinePlugin({
   FIMFIC2EPUB_VERSION: JSON.stringify(packageVersion)
 })
 
-// No need to bloat the build with a list of all tlds...
-const replaceTlds = new webpack.NormalModuleReplacementPlugin(/^tlds$/, '../../../src/false')
-
 webpackConfig.forEach((c) => {
   c.plugins.push(webpackDefines)
-  c.plugins.push(replaceTlds)
 })
 
 let wpCompiler = webpack(webpackConfig)
@@ -66,10 +55,13 @@ function webpackTask () {
       p = removeNPMAbsolutePaths('node_modules')
     }
 
-    p.then((results) => {
+    p.then(() => {
       // run webpack compiler
-      wpCompiler.run(function (err, stats) {
-        if (err) throw new PluginError('webpack', err)
+      wpCompiler.run((err, stats) => {
+        if (err) {
+          reject(new PluginError('webpack', err))
+          return
+        }
         log('[webpack]', stats.toString({
           colors: true,
           hash: false,
@@ -78,12 +70,15 @@ function webpackTask () {
           timings: false,
           modules: false,
           chunkModules: false,
-          cached: false,
-          maxModules: 0
+          cached: false
         }))
-        resolve()
+        if (stats.hasErrors()) {
+          reject(new PluginError('webpack', 'Build failed with errors', { showStack: false }))
+          return
+        }
+        wpCompiler.close(() => resolve())
       })
-    }).catch((err) => { throw err })
+    }).catch(reject)
   })
 }
 
@@ -97,31 +92,43 @@ function convertFontAwesomeVars (contents) {
   return JSON.stringify(vars)
 }
 
-function lintPipe (stream) {
-  return stream
-    .pipe(filter(['**/*', '!src/lib/**/*']))
-    .pipe(standard())
-    .pipe(standard.reporter('default', { breakOnError: false }))
+// Manifest tweaks for the store packages. The source manifest works unpacked
+// in both browsers (Chrome uses background.service_worker, Firefox uses
+// background.scripts); the packages only keep what each browser understands.
+function firefoxManifest (json) {
+  json.version = packageVersion
+  if (json.background) {
+    delete json.background.service_worker
+  }
+  return json
+}
+
+function chromeManifest (json) {
+  json.version = packageVersion
+  if (json.background) {
+    delete json.background.scripts
+  }
+  delete json.browser_specific_settings
+  return json
 }
 
 // Cleanup task
-gulp.task('clean', () => del([
+gulp.task('clean', () => Promise.all([
   'build/',
   'extension/build/',
   'dist/',
   'extension.zip',
   'extension.xpi',
-  'extension.crx',
-  'fimfic2epub.safariextension/'
-]))
+  'extension.crx'
+].map((p) => fs.promises.rm(p, { recursive: true, force: true }))))
 
 gulp.task('version', () => {
-  delete require.cache[require.resolve('./package.json')]
-  packageVersion = require('./package.json').version
+  packageVersion = readPackageVersion()
   return Promise.resolve()
 })
+
 gulp.task('fontawesome', () => {
-  return gulp.src('node_modules/font-awesome/scss/_variables.scss')
+  return gulp.src(require.resolve('font-awesome/scss/_variables.scss'))
     .pipe(change(convertFontAwesomeVars))
     .pipe(rename({
       basename: 'font-awesome-codes',
@@ -142,21 +149,9 @@ gulp.task('binaries', gulp.series('version', function binariesTask () {
 gulp.task('pack:firefox', gulp.series('version', function packFirefox () {
   const manifest = filter('extension/manifest.json', { restore: true })
 
-  return gulp.src('extension/**/*')
+  return gulp.src('extension/**/*', { encoding: false })
     .pipe(manifest)
-    .pipe(jsonedit((json) => {
-      json.version = packageVersion
-      if (json.content_scripts) {
-        // tweak the manifest so Firefox can read it
-        json.applications = {
-          gecko: {
-            id: 'fimfic2epub@mozilla.org'
-          }
-        }
-        delete json.background.persistent
-      }
-      return json
-    }))
+    .pipe(jsonedit(firefoxManifest))
     .pipe(manifest.restore)
     .pipe(zip('extension.xpi'))
     .pipe(gulp.dest('./'))
@@ -165,52 +160,29 @@ gulp.task('pack:firefox', gulp.series('version', function packFirefox () {
 gulp.task('pack:chrome', gulp.series('version', function packChrome () {
   const manifest = filter('extension/manifest.json', { restore: true })
 
-  return gulp.src('extension/**/*')
+  return gulp.src('extension/**/*', { encoding: false })
     .pipe(manifest)
-    .pipe(jsonedit({
-      version: packageVersion
-    }))
+    .pipe(jsonedit(chromeManifest))
     .pipe(manifest.restore)
     .pipe(zip('extension.zip'))
     .pipe(gulp.dest('./'))
 }))
+
 gulp.task('pack', gulp.parallel('binaries', 'pack:firefox', 'pack:chrome'))
 
 // Main tasks
 gulp.task('webpack', gulp.series(gulp.parallel('version', 'fontawesome'), webpackTask, isStandalone ? 'binaries' : 'pack'))
 
 gulp.task('watch:webpack', () => {
-  return watch(['src/**/*.js', 'src/**/*.styl', './package.json'], watchOpts, gulp.series('webpack'))
+  return gulp.watch(['src/**/*.js', 'src/**/*.styl', 'package.json'], gulp.series('webpack'))
 })
 
-gulp.task('lint', () => {
-  return lintPipe(gulp.src(['gulpfile.babel.js', 'webpack.config.js', 'src/**/*.js']))
-})
-gulp.task('watch:lint', () => {
-  return watch(['src/**/*.js', 'gulpfile.babel.js', 'webpack.config.js'], watchOpts, (file) => {
-    return lintPipe(gulp.src(file.path))
-  })
+gulp.task('watch:pack', () => {
+  return gulp.watch(['extension/**/*', '!extension/build/**/*'], gulp.series('pack'))
 })
 
 // Default task
-gulp.task('default', gulp.series('clean', gulp.parallel('webpack', 'lint')))
-
-gulp.task('watch:pack', () => {
-  return watch(['extension/**/*', '!extension/build/**/*'], watchOpts, gulp.series('pack'))
-})
+gulp.task('default', gulp.series('clean', 'webpack'))
 
 // Watch task
-gulp.task('watch', gulp.series('default', gulp.parallel('watch:lint', 'watch:pack', 'watch:webpack')))
-
-/*
-gulp.task('pack:safari', (done) => {
-  exec('rm -rf fimfic2epub.safariextension/; cp -r extension/ fimfic2epub.safariextension', [], (error, stdout, stderr) => {
-    // log('[pack:safari]', stdout)
-    if (error || stderr) {
-      done(new PluginError('pack:safari', stderr, {showStack: false}))
-      return
-    }
-    done()
-  })
-})
-*/
+gulp.task('watch', gulp.series('default', gulp.parallel('watch:webpack', 'watch:pack')))

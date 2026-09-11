@@ -4,9 +4,8 @@ import escapeStringRegexp from 'escape-string-regexp'
 import zeroFill from 'zero-fill'
 import { decode } from 'html-entities'
 import sanitize from 'sanitize-filename'
-import { URL } from 'url'
 import isNode from 'detect-node'
-import FileType from 'file-type'
+import { fileTypeFromBuffer } from 'file-type'
 import isSvg from 'is-svg'
 import sizeOf from 'image-size'
 import EventEmitter from 'events'
@@ -327,7 +326,7 @@ class FimFic2Epub extends EventEmitter {
 
         fetchRemote(url, 'arraybuffer').then(async (data) => {
           r.dest = null
-          let info = await FileType.fromBuffer(isNode ? data : new Uint8Array(data))
+          let info = await fileTypeFromBuffer(isNode ? data : new Uint8Array(data))
           if (!info || info.mime === 'application/xml') {
             // file-type doesn't support SVG, extra check:
             if (isSvg(Buffer.from(data).toString('utf8'))) {
@@ -673,7 +672,7 @@ class FimFic2Epub extends EventEmitter {
       return fontAwesomeCodes[name].charCodeAt(0)
     })
     const fontFile = require('font-awesome/fonts/fontawesome-webfont.ttf')
-    this.iconsFont = await subsetFont(fontFile, glyphs, { local: isNode })
+    this.iconsFont = await subsetFont(fontFile, glyphs)
   }
 
   iconsStyle () {

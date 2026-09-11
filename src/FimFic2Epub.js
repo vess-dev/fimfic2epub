@@ -96,6 +96,7 @@ class FimFic2Epub extends EventEmitter {
       showChapterWordCount: true,
       showChapterDuration: true,
       includeExternal: true,
+      dedupeImages: true, // store identical images (with different urls) only once
       paragraphStyle: 'spaced',
       kepubify: false,
       joinSubjects: false,
@@ -336,15 +337,19 @@ class FimFic2Epub extends EventEmitter {
             }
           }
           if (info) {
-            const checksum = crc32(isNode ? data : new Uint8Array(data))
-            if (checksums.has(checksum)) {
+            // Identical files (for example the same "image not found" placeholder
+            // returned for several dead links) are stored once, unless disabled.
+            const checksum = this.options.dedupeImages ? crc32(isNode ? data : new Uint8Array(data)) : null
+            if (checksum !== null && checksums.has(checksum)) {
               const sameFile = this.remoteResources.get(checksums.get(checksum))
               r.dest = sameFile.dest
               r.filename = sameFile.dest
               r.type = sameFile.type
               r.data = sameFile.data
             } else {
-              checksums.set(checksum, url)
+              if (checksum !== null) {
+                checksums.set(checksum, url)
+              }
               const type = info.mime
               r.type = type
               const isImage = type.startsWith('image/')

@@ -1,59 +1,46 @@
-/* global chrome, safari */
+/* global chrome */
 
 import fetch from './fetch'
 import isNode from 'detect-node'
 
-const safariQueue = {}
+// Inside the web extension, cross-origin requests are made by the background
+// script (which holds the host permissions) and the bytes are passed back to
+// the content script as base64, since extension messages must be JSON.
+const hasExtensionRuntime = !isNode && typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.id)
 
-// messaging with the safari extension global page
-function safariHandler (ev) {
-  const type = ev.message.type
-  const url = ev.message.input
-  const data = ev.message.output // arraybuffer
-  if (!safariQueue[url]) {
-    // console.error("Unable to get callback for " + url, JSON.stringify(safariQueue))
-    return
+function base64ToBytes (base64) {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
   }
-  const cb = safariQueue[url].cb
-  const responseType = safariQueue[url].responseType
-  console.log(url, cb, responseType, data)
-  delete safariQueue[url]
-
-  if (responseType === 'blob') {
-    const blob = new Blob([data], { type: type })
-    cb(blob, type)
-  } else {
-    if (!responseType) {
-      const blob = new Blob([data], { type: type })
-      const fr = new FileReader()
-      fr.onloadend = function () {
-        cb(fr.result, type)
-      }
-      fr.readAsText(blob)
-    } else {
-      cb(data, type)
-    }
-  }
-}
-if (typeof safari !== 'undefined') {
-  safari.self.addEventListener('message', safariHandler, false)
+  return bytes
 }
 
-function fetchBackground (url, responseType) {
+function fetchViaBackground (url, responseType) {
   return new Promise((resolve, reject) => {
-    if (typeof chrome !== 'undefined' && chrome.runtime.sendMessage) {
-      chrome.runtime.sendMessage(url, function (objurl) {
-        resolve(fetch(objurl, responseType).then((data) => {
-          URL.revokeObjectURL(objurl)
-          return data
-        }))
-      })
-    } else if (typeof safari !== 'undefined') {
-      safariQueue[url] = { cb: resolve, responseType: responseType }
-      safari.self.tab.dispatchMessage('remote', url)
-    } else {
-      resolve(null)
-    }
+    chrome.runtime.sendMessage({ type: 'fetch', url }, (reply) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error('Error fetching ' + url + ' (' + chrome.runtime.lastError.message + ')'))
+        return
+      }
+      if (!reply || typeof reply !== 'object') {
+        reject(new Error('Error fetching ' + url + ' (no reply from the background script)'))
+        return
+      }
+      if (!reply.ok) {
+        reject(new Error('Error fetching ' + url + ' (' + (reply.error || 'unknown error') + ')'))
+        return
+      }
+      const bytes = base64ToBytes(reply.data || '')
+      if (responseType === 'blob') {
+        resolve(new Blob([bytes], { type: reply.type || '' }))
+      } else if (responseType === 'arraybuffer') {
+        resolve(bytes.buffer)
+      } else {
+        resolve(new TextDecoder('utf-8').decode(bytes))
+      }
+    })
   })
 }
 
@@ -61,14 +48,11 @@ export default function fetchRemote (url, responseType) {
   if (url.startsWith('//')) {
     url = 'https:' + url
   }
-  if (!isNode && document.location.protocol === 'https:') {
-    if (url.startsWith('/')) {
-      url = window.location.origin + url
-    }
-    return fetchBackground(url, responseType)
+  if (!hasExtensionRuntime) {
+    return fetch(url, responseType)
   }
-  return fetch(url, responseType).then((data) => {
-    if (!data) return fetchBackground(url, responseType)
-    else return Promise.resolve(data)
-  })
+  if (url.startsWith('/')) {
+    url = globalThis.location.origin + url
+  }
+  return fetchViaBackground(url, responseType)
 }

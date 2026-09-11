@@ -14,23 +14,16 @@ m.withAttr = function (attrName, callback, context) {
   }
 }
 
-function blobToDataURL (blob) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader()
-    fr.onloadend = function (e) { resolve(fr.result) }
-    fr.readAsDataURL(blob)
-  })
-}
-
 function blobToArrayBuffer (blob) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader()
     fr.onloadend = function (e) { resolve(fr.result) }
+    fr.onerror = function () { reject(fr.error) }
     fr.readAsArrayBuffer(blob)
   })
 }
 
-const isChromeExt = typeof chrome !== 'undefined'
+const hasExtensionRuntime = typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.id)
 
 let pageStoryId
 try {
@@ -113,6 +106,10 @@ function redraw (arg) {
   }
 }
 
+function errorMessage (err) {
+  return 'Error: ' + (err && err.message ? err.message : err)
+}
+
 const ffcProgress = prop(0)
 const ffcStatus = prop('')
 
@@ -143,6 +140,7 @@ const dialog = {
     this.showChapterWordCount = prop(ffc.options.showChapterWordCount)
     this.showChapterDuration = prop(ffc.options.showChapterDuration)
     this.includeExternal = prop(ffc.options.includeExternal)
+    this.dedupeImages = prop(ffc.options.dedupeImages)
     this.kepubify = prop(ffc.options.kepubify)
     this.joinSubjects = prop(ffc.options.joinSubjects)
     this.paragraphStyle = prop(ffc.options.paragraphStyle)
@@ -166,9 +164,18 @@ const dialog = {
         ffc.fetchChapters().then(() => {
           ffcProgress(-1)
           redraw()
+        }).catch((err) => {
+          console.error(err)
+          ffcProgress(-1)
+          ffcStatus(errorMessage(err))
+          redraw()
         })
       }).catch((err) => {
         console.error(err)
+        this.isLoading(false)
+        ffcProgress(-1)
+        ffcStatus(errorMessage(err))
+        redraw()
       })
     }
 
@@ -219,7 +226,7 @@ const dialog = {
     }
 
     this.move = (xpos, ypos) => {
-      const bc = document.querySelector('.body_container')
+      const bc = document.querySelector('.body_container') || document.body
       const rect = this.el().firstChild.getBoundingClientRect()
       this.xpos(Math.max(0, Math.min(xpos, bc.offsetWidth - rect.width)))
       this.ypos(Math.max(0, Math.min(ypos, bc.offsetHeight - rect.height)))
@@ -246,58 +253,64 @@ const dialog = {
     return m('.drop-down-pop-up-container', { oncreate: ctrl.onOpen.bind(ctrl) }, m('.drop-down-pop-up', { style: { 'min-width': '720px' } }, [
       m('h1', { onmousedown: ctrl.ondown }, m('i.fa.fa-book'), 'Export to EPUB (v' + FIMFIC2EPUB_VERSION + ')', m('a.close_button', { onclick: closeDialog })),
       m('.drop-down-pop-up-content', [
-        ctrl.isLoading() ? m('div', { style: 'text-align:center;' }, m('i.fa.fa-spin.fa-spinner', { style: 'font-size:50px; margin:20px; color:#777;' })) : m('table.properties', [
-          m('tr', m('td.section_header', { colspan: 3 }, m('b', 'General settings'))),
-          m('tr', m('td.label', 'Title'), m('td', { colspan: 2 }, m('input', { type: 'text', value: ctrl.title(), onchange: m.withAttr('value', ctrl.title) }))),
-          m('tr', m('td.label', 'Author'), m('td', { colspan: 2 }, m('input', { type: 'text', value: ctrl.author(), onchange: m.withAttr('value', ctrl.author) }))),
-          m('tr', m('td.label', 'Custom cover image'),
-            m('td',
-              ctrl.checkboxCoverUrl() ? m('input', { type: 'url', placeholder: 'Image URL', onchange: m.withAttr('value', ctrl.coverUrl) }) : m('input', { type: 'file', accept: 'image/*', onchange: ctrl.setCoverFile, onupdate: ctrl.setCoverFile })
+        ctrl.isLoading()
+          ? m('div', { style: 'text-align:center;' }, m('i.fa.fa-spin.fa-spinner', { style: 'font-size:50px; margin:20px; color:#777;' }))
+          : m('table.properties', [
+            m('tr', m('td.section_header', { colspan: 3 }, m('b', 'General settings'))),
+            m('tr', m('td.label', 'Title'), m('td', { colspan: 2 }, m('input', { type: 'text', value: ctrl.title(), onchange: m.withAttr('value', ctrl.title) }))),
+            m('tr', m('td.label', 'Author'), m('td', { colspan: 2 }, m('input', { type: 'text', value: ctrl.author(), onchange: m.withAttr('value', ctrl.author) }))),
+            m('tr', m('td.label', 'Custom cover image'),
+              m('td',
+                ctrl.checkboxCoverUrl() ? m('input', { type: 'url', placeholder: 'Image URL', onchange: m.withAttr('value', ctrl.coverUrl) }) : m('input', { type: 'file', accept: 'image/*', onchange: ctrl.setCoverFile, onupdate: ctrl.setCoverFile })
+              ),
+              m('td', { style: 'width: 1px' }, m(checkbox, { checked: ctrl.checkboxCoverUrl(), onchange: m.withAttr('checked', ctrl.checkboxCoverUrl) }, 'Use image URL'))
             ),
-            m('td', { style: 'width: 1px' }, m(checkbox, { checked: ctrl.checkboxCoverUrl(), onchange: m.withAttr('checked', ctrl.checkboxCoverUrl) }, 'Use image URL'))
-          ),
-          m('tr', m('td.label', 'Paragraph style'), m('td', { colspan: 2 },
-            m('select', { onchange: m.withAttr('value', ctrl.paragraphStyle) }, selectOptions([
-              ['indented', 'Indent first line in all paragraphs except the first (Traditional Paperback)'],
-              ['spaced', 'Separate each paragraph with double space (Traditional Web)'],
-              ['both', 'Double space and indent all paragraphs except first (Fusion)'],
-              ['indentedall', 'Indent all paragraphs including the first (Modified Traditional)']
-            ], ctrl.paragraphStyle()))
-          )),
-          m('tr', m('td.label', { style: 'vertical-align: top;' }, 'Options'), m('td', { colspan: 2 },
-            m(checkbox, { checked: ctrl.typogrify(), onchange: m.withAttr('checked', ctrl.typogrify) }, 'Apply typographic fixes (smart quotes, dashes etc.)'),
-            m(checkbox, { checked: ctrl.showChapterHeadings(), onchange: m.withAttr('checked', ctrl.showChapterHeadings) }, 'Add chapter headings'),
-            m(checkbox, { checked: ctrl.showChapterWordCount(), onchange: m.withAttr('checked', ctrl.showChapterWordCount), disabled: !ctrl.showChapterHeadings() }, 'Include word count in chapter heading'),
-            m(checkbox, { checked: ctrl.showChapterDuration(), onchange: m.withAttr('checked', ctrl.showChapterDuration), disabled: !ctrl.showChapterHeadings() }, 'Include time to read in chapter heading'),
-            m(checkbox, { checked: ctrl.addCommentsLink(), onchange: m.withAttr('checked', ctrl.addCommentsLink) }, 'Add link to online comments (at the end of chapters)'),
-            m(checkbox, { checked: ctrl.includeAuthorNotes(), onchange: m.withAttr('checked', ctrl.includeAuthorNotes) }, 'Include author\'s notes'),
-            m(checkbox, { checked: ctrl.useAuthorNotesIndex(), onchange: m.withAttr('checked', ctrl.useAuthorNotesIndex), disabled: !ctrl.includeAuthorNotes() }, 'Put all notes at the end of the ebook'),
-            m(checkbox, { checked: ctrl.calculateReadingEase(), onchange: m.withAttr('checked', ctrl.calculateReadingEase) }, 'Calculate Flesch reading ease'),
-            m(checkbox, { checked: ctrl.addChapterBars(), onchange: m.withAttr('checked', ctrl.addChapterBars) }, 'Show reading progress and chapter lengths as bars'),
-            m(checkbox, { checked: ctrl.includeExternal(), onchange: m.withAttr('checked', ctrl.includeExternal) }, 'Download & include remote content (embed images)'),
-            m('div', { style: 'font-size: 0.9em; line-height: 1em; margin-top: 4px; margin-bottom: 6px; opacity: 0.6;' }, 'Note: Disabling this creates invalid EPUBs and requires internet access to see remote content. Only cover image will be embedded.'),
-            m(checkbox, { checked: ctrl.kepubify(), onchange: m.withAttr('checked', ctrl.kepubify) }, 'Export as Kobo EPUB, this adds some Kobo-specific div/span tags.')
-          )),
-          m('tr', m('td.label', 'Words per minute'), m('td', { colspan: 2 },
-            m('input', { type: 'number', min: 0, step: 1, value: ctrl.wordsPerMinute(), onchange: m.withAttr('value', ctrl.wordsPerMinute), placeholder: '200 (default)', style: { width: '140px', float: 'left', marginRight: '.75rem', marginTop: '.35rem', position: 'relative', zIndex: 1 } }),
-            m('div', { style: 'font-size: 0.9em; line-height: 1em; margin-top: 4px; margin-bottom: 6px; opacity: 0.6;' }, 'This is used to estimate the time it takes to read the story. Take a test to find out your reading speed.', m('br'), 'Set to 0 to disable.')
-          )),
+            m('tr', m('td.label', 'Paragraph style'), m('td', { colspan: 2 },
+              m('select', { onchange: m.withAttr('value', ctrl.paragraphStyle) }, selectOptions([
+                ['indented', 'Indent first line in all paragraphs except the first (Traditional Paperback)'],
+                ['spaced', 'Separate each paragraph with double space (Traditional Web)'],
+                ['both', 'Double space and indent all paragraphs except first (Fusion)'],
+                ['indentedall', 'Indent all paragraphs including the first (Modified Traditional)']
+              ], ctrl.paragraphStyle()))
+            )),
+            m('tr', m('td.label', { style: 'vertical-align: top;' }, 'Options'), m('td', { colspan: 2 },
+              m(checkbox, { checked: ctrl.typogrify(), onchange: m.withAttr('checked', ctrl.typogrify) }, 'Apply typographic fixes (smart quotes, dashes etc.)'),
+              m(checkbox, { checked: ctrl.showChapterHeadings(), onchange: m.withAttr('checked', ctrl.showChapterHeadings) }, 'Add chapter headings'),
+              m(checkbox, { checked: ctrl.showChapterWordCount(), onchange: m.withAttr('checked', ctrl.showChapterWordCount), disabled: !ctrl.showChapterHeadings() }, 'Include word count in chapter heading'),
+              m(checkbox, { checked: ctrl.showChapterDuration(), onchange: m.withAttr('checked', ctrl.showChapterDuration), disabled: !ctrl.showChapterHeadings() }, 'Include time to read in chapter heading'),
+              m(checkbox, { checked: ctrl.addCommentsLink(), onchange: m.withAttr('checked', ctrl.addCommentsLink) }, 'Add link to online comments (at the end of chapters)'),
+              m(checkbox, { checked: ctrl.includeAuthorNotes(), onchange: m.withAttr('checked', ctrl.includeAuthorNotes) }, 'Include author\'s notes'),
+              m(checkbox, { checked: ctrl.useAuthorNotesIndex(), onchange: m.withAttr('checked', ctrl.useAuthorNotesIndex), disabled: !ctrl.includeAuthorNotes() }, 'Put all notes at the end of the ebook'),
+              m(checkbox, { checked: ctrl.calculateReadingEase(), onchange: m.withAttr('checked', ctrl.calculateReadingEase) }, 'Calculate Flesch reading ease'),
+              m(checkbox, { checked: ctrl.addChapterBars(), onchange: m.withAttr('checked', ctrl.addChapterBars) }, 'Show reading progress and chapter lengths as bars'),
+              m(checkbox, { checked: ctrl.includeExternal(), onchange: m.withAttr('checked', ctrl.includeExternal) }, 'Download & include remote content (embed images)'),
+              m('div', { style: 'font-size: 0.9em; line-height: 1em; margin-top: 4px; margin-bottom: 6px; opacity: 0.6;' }, 'Note: Disabling this creates invalid EPUBs and requires internet access to see remote content. Only cover image will be embedded.'),
+              m(checkbox, { checked: ctrl.dedupeImages(), onchange: m.withAttr('checked', ctrl.dedupeImages), disabled: !ctrl.includeExternal() }, 'Store identical images only once'),
+              m('div', { style: 'font-size: 0.9em; line-height: 1em; margin-top: 4px; margin-bottom: 6px; opacity: 0.6;' }, 'Uncheck to keep a separate copy for every image link, even when several links return the same file (for example broken-image placeholders).'),
+              m(checkbox, { checked: ctrl.kepubify(), onchange: m.withAttr('checked', ctrl.kepubify) }, 'Export as Kobo EPUB, this adds some Kobo-specific div/span tags.')
+            )),
+            m('tr', m('td.label', 'Words per minute'), m('td', { colspan: 2 },
+              m('input', { type: 'number', min: 0, step: 1, value: ctrl.wordsPerMinute(), onchange: m.withAttr('value', ctrl.wordsPerMinute), placeholder: '200 (default)', style: { width: '140px', float: 'left', marginRight: '.75rem', marginTop: '.35rem', position: 'relative', zIndex: 1 } }),
+              m('div', { style: 'font-size: 0.9em; line-height: 1em; margin-top: 4px; margin-bottom: 6px; opacity: 0.6;' }, 'This is used to estimate the time it takes to read the story. Take a test to find out your reading speed.', m('br'), 'Set to 0 to disable.')
+            )),
 
-          m('tr', m('td.section_header', { colspan: 3 }, m('b', 'Metadata customization'))),
-          m('tr', m('td.label', { style: 'vertical-align: top;' }, 'Description'), m('td', { colspan: 2 }, m('textarea', { oncreate: ({ dom }) => autosize(dom), onchange: ctrl.setDescription }, ctrl.description()))),
-          m('tr', m('td.label', { style: 'vertical-align: top;' }, 'Categories'), m('td', { colspan: 2 },
-            m('textarea', { rows: 2, oncreate: ({ dom }) => autosize(dom), onchange: ctrl.setSubjects }, ctrl.subjects().join('\n')),
-            m(checkbox, { checked: ctrl.joinSubjects(), onchange: m.withAttr('checked', ctrl.joinSubjects) }, 'Join categories and separate with commas')
-          ))
-        ]),
+            m('tr', m('td.section_header', { colspan: 3 }, m('b', 'Metadata customization'))),
+            m('tr', m('td.label', { style: 'vertical-align: top;' }, 'Description'), m('td', { colspan: 2 }, m('textarea', { oncreate: ({ dom }) => autosize(dom), onchange: ctrl.setDescription }, ctrl.description()))),
+            m('tr', m('td.label', { style: 'vertical-align: top;' }, 'Categories'), m('td', { colspan: 2 },
+              m('textarea', { rows: 2, oncreate: ({ dom }) => autosize(dom), onchange: ctrl.setSubjects }, ctrl.subjects().join('\n')),
+              m(checkbox, { checked: ctrl.joinSubjects(), onchange: m.withAttr('checked', ctrl.joinSubjects) }, 'Join categories and separate with commas')
+            ))
+          ]),
         m('.drop-down-pop-up-footer', [
           m('button.styled_button', { onclick: ctrl.createEpub, disabled: ffcProgress() >= 0 && ffcProgress() < 1, style: 'float: right' }, 'Download ' + (ctrl.kepubify() ? 'Kobo EPUB' : 'EPUB')),
-          ffcProgress() >= 0 ? m('.rating_container',
-            m('.rating-bar', { style: { background: 'rgba(0, 0, 0, 0.2)', 'margin-right': '5px' } }, m('.like-bar', { style: { width: Math.max(0, ffcProgress()) * 100 + '%' } })),
-            ' ',
-            ffcProgress() >= 0 && ffcProgress() < 1 ? [m('i.fa.fa-spin.fa-spinner'), m.trust('&nbsp;&nbsp;')] : null,
-            ffcStatus()
-          ) : null,
+          ffcProgress() >= 0 || ffcStatus()
+            ? m('.rating_container',
+              ffcProgress() >= 0 ? m('.rating-bar', { style: { background: 'rgba(0, 0, 0, 0.2)', 'margin-right': '5px' } }, m('.like-bar', { style: { width: Math.max(0, ffcProgress()) * 100 + '%' } })) : null,
+              ' ',
+              ffcProgress() >= 0 && ffcProgress() < 1 ? [m('i.fa.fa-spin.fa-spinner'), m.trust('&nbsp;&nbsp;')] : null,
+              ffcStatus()
+            )
+            : null,
           m('div', { style: 'clear: both' })
         ])
       ])
@@ -312,6 +325,13 @@ function openDialog () {
   }
   dialogOpen = true
   m.mount(dialogContainer, dialog)
+  // Some content blockers hide the dialog because it reuses Fimfiction's pop-up styling (issue #55)
+  setTimeout(() => {
+    const el = dialogContainer.firstElementChild
+    if (dialogOpen && el && window.getComputedStyle(el).display === 'none') {
+      console.warn('fimfic2epub: the export dialog is hidden by the page or a content blocker. Try disabling ad/content blockers for fimfiction.net.')
+    }
+  }, 500)
 }
 function closeDialog () {
   dialogOpen = false
@@ -344,6 +364,7 @@ function createEpub (model) {
   ffc.options.showChapterWordCount = model.showChapterWordCount()
   ffc.options.showChapterDuration = model.showChapterDuration()
   ffc.options.includeExternal = model.includeExternal()
+  ffc.options.dedupeImages = model.dedupeImages()
   ffc.options.paragraphStyle = model.paragraphStyle()
   ffc.options.kepubify = model.kepubify()
   ffc.subjects = model.subjects()
@@ -361,24 +382,23 @@ function createEpub (model) {
     .then(ffc.fetchAll.bind(ffc))
     .then(ffc.build.bind(ffc))
     .then(ffc.getFile.bind(ffc)).then((file) => {
-      if (typeof safari !== 'undefined') {
-        blobToDataURL(file).then((dataurl) => {
-          document.location.href = dataurl
-          alert('Add .epub to the filename of the downloaded file')
-        })
-      } else {
-        let filename = ffc.filename
-        if (ffc.options.kepubify) {
-          filename = filename.replace(/\.epub$/, '.kepub.epub')
-        }
-        saveAs(file, filename)
+      let filename = ffc.filename
+      if (ffc.options.kepubify) {
+        filename = filename.replace(/\.epub$/, '.kepub.epub')
       }
+      saveAs(file, filename)
+    })
+    .catch((err) => {
+      console.error(err)
+      ffcProgress(-1)
+      ffcStatus(errorMessage(err))
+      redraw()
     })
 }
 
 function openStory (id) {
   chrome.storage.sync.get(['ffcOptions', 'version'], function (result) {
-    const options = result ? result.ffcOptions : {}
+    const options = (result && result.ffcOptions) || {}
     // Reset options on new version
     // if (result.version !== FIMFIC2EPUB_VERSION) {
     //   options = {}
@@ -405,10 +425,15 @@ function onProgress (percent, status) {
   redraw()
 }
 
-if (pageStoryId && isChromeExt) {
-  chrome.runtime.sendMessage({ showPageAction: true })
+if (pageStoryId && hasExtensionRuntime) {
+  // enables the toolbar button for this tab
+  chrome.runtime.sendMessage({ type: 'showPageAction' }, () => {
+    if (chrome.runtime.lastError) {
+      // the background script is unavailable, the toolbar button simply stays disabled
+    }
+  })
   chrome.runtime.onMessage.addListener(function (request) {
-    if (request === 'pageAction') {
+    if (request === 'pageAction' || (request && request.type === 'pageAction')) {
       openStory(pageStoryId)
     }
   })

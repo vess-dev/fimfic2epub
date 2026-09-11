@@ -1,5 +1,5 @@
 {
-	"manifest_version": 2,
+	"manifest_version": 3,
 
 	"name": "fimfic2epub",
 	"short_name": "fimfic2epub",
@@ -11,8 +11,8 @@
 	},
 
 	"background": {
-		"scripts": ["build/eventPage.js"],
-		"persistent": false
+		"service_worker": "build/background.js",
+		"scripts": ["build/background.js"]
 	},
 
 	"content_scripts": [
@@ -23,27 +23,41 @@
 		}
 	],
 
-	"page_action": {
-		"default_icon": "fimfic2epub-logo.png"
+	"action": {
+		"default_icon": "fimfic2epub-logo.png",
+		"default_title": "Download EPUB with fimfic2epub"
 	},
 
 	"web_accessible_resources": [
-		"fimfic2epub-logo.png"
+		{
+			"resources": ["fimfic2epub-logo.png"],
+			"matches": ["https://www.fimfiction.net/*", "https://fimfiction.net/*"]
+		}
 	],
 
 	"permissions": [
+		"storage"
+	],
+
+	"host_permissions": [
 		"https://fimfiction.net/*",
 		"https://*.fimfiction.net/*",
 		"https://www.googleapis.com/*",
 		"https://i.ytimg.com/*",
-		"https://twemoji.maxcdn.com/*",
-		"https://cdn.jsdelivr.net/gh/twitter/*",
-		"storage"
+		"https://img.youtube.com/*",
+		"https://cdn.jsdelivr.net/*"
 	],
 
 	"browser_specific_settings": {
 		"gecko": {
-			"id": "fimfic2epub@mozilla.org"
+			"id": "fimfic2epub@mozilla.org",
+			"strict_min_version": "140.0",
+			"data_collection_permissions": {
+				"required": ["none"]
+			}
+		},
+		"gecko_android": {
+			"strict_min_version": "142.0"
 		}
 	}
 }

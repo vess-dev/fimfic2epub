@@ -775,48 +775,7 @@ class FimFic2Epub extends EventEmitter {
     this.coverImage = null
     const url = this.coverUrl || this.storyInfo.full_image
     if (!url) {
-      console.warn('Story has no image. Generating one...')
-      let canvas
-      if (isNode) {
-        canvas = require('canvas').createCanvas(1080, 1440)
-      } else {
-        canvas = document.createElement('canvas')
-        canvas.width = 1080
-        canvas.height = 1440
-      }
-      const ctx = canvas.getContext('2d')
-      ctx.fillStyle = 'white'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      ctx.fillStyle = 'black'
-      ctx.textAlign = 'center'
-      ctx.strokeStyle = 'black'
-
-      ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40)
-      ctx.strokeRect(12, 12, canvas.width - 24, canvas.height - 24)
-
-      const title = this.storyInfo.title
-      const author = this.storyInfo.author.name
-
-      let fontSize = 150
-      let width
-      do {
-        ctx.font = 'bold ' + fontSize + 'px sans-serif'
-        width = ctx.measureText(title).width
-        fontSize -= 5
-      } while (width > canvas.width * 0.85)
-
-      ctx.fillText(title, canvas.width / 2, canvas.height * 0.2)
-      fontSize = 75
-      do {
-        ctx.font = fontSize + 'px sans-serif'
-        width = ctx.measureText(author).width
-        fontSize -= 5
-      } while (width > canvas.width * 0.7)
-
-      ctx.fillText(author, canvas.width / 2, canvas.height * 0.9)
-
-      return this.setCoverImage(Buffer.from(canvas.toDataURL('image/jpeg').split(',')[1], 'base64'))
+      return this.generateCoverImage()
     }
 
     this.progress(0, 0, 'Fetching cover image...')
@@ -833,6 +792,60 @@ class FimFic2Epub extends EventEmitter {
         return data
       })
     return this.pcache.coverImage
+  }
+
+  // Draws a simple cover with the title and author for stories without an image
+  async generateCoverImage () {
+    console.warn('Story has no image. Generating one...')
+    let canvas
+    if (isNode) {
+      try {
+        canvas = require('@napi-rs/canvas').createCanvas(1080, 1440)
+      } catch (err) {
+        console.warn('The optional @napi-rs/canvas package is not available, the ebook will have a text-only cover page')
+        return null
+      }
+    } else {
+      canvas = document.createElement('canvas')
+      canvas.width = 1080
+      canvas.height = 1440
+    }
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = 'white'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    ctx.fillStyle = 'black'
+    ctx.textAlign = 'center'
+    ctx.strokeStyle = 'black'
+
+    ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40)
+    ctx.strokeRect(12, 12, canvas.width - 24, canvas.height - 24)
+
+    const title = this.storyInfo.title
+    const author = this.storyInfo.author.name
+
+    let fontSize = 150
+    let width
+    do {
+      ctx.font = 'bold ' + fontSize + 'px sans-serif'
+      width = ctx.measureText(title).width
+      fontSize -= 5
+    } while (width > canvas.width * 0.85 && fontSize > 10)
+
+    ctx.fillText(title, canvas.width / 2, canvas.height * 0.2)
+    fontSize = 75
+    do {
+      ctx.font = fontSize + 'px sans-serif'
+      width = ctx.measureText(author).width
+      fontSize -= 5
+    } while (width > canvas.width * 0.7 && fontSize > 10)
+
+    ctx.fillText(author, canvas.width / 2, canvas.height * 0.9)
+
+    const jpeg = isNode && typeof canvas.toBuffer === 'function'
+      ? canvas.toBuffer('image/jpeg')
+      : Buffer.from(canvas.toDataURL('image/jpeg').split(',')[1], 'base64')
+    return this.setCoverImage(jpeg)
   }
 
   fetchTitlePage () {

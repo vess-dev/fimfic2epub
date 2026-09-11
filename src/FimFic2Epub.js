@@ -29,7 +29,12 @@ const trimWhitespace = /^\s*(<br\s*\/?\s*>)+|(<br\s*\/?\s*>)+\s*$/ig
 class FimFic2Epub extends EventEmitter {
   static getStoryId (id) {
     if (isNaN(id)) {
-      const url = new URL(id)
+      let url
+      try {
+        url = new URL(id)
+      } catch (err) {
+        throw new Error('Invalid story id or url: ' + id)
+      }
       if (url.hostname === 'www.fimfiction.net' || url.hostname === 'fimfiction.net') {
         const m = url.pathname.match(/^\/story\/(\d+)/)
         if (m) {
@@ -161,6 +166,9 @@ class FimFic2Epub extends EventEmitter {
       .then(() => {
         this.progress(0, 0.95)
         this.pcache.fetchAll = null
+      }, (err) => {
+        this.pcache.fetchAll = null
+        throw err
       })
 
     return this.pcache.fetchAll
@@ -187,6 +195,10 @@ class FimFic2Epub extends EventEmitter {
         this.storyInfo.description = html
       }).then(() => {
         this.pcache.metadata = null
+      }, (err) => {
+        this.pcache.metadata = null
+        this.storyInfo = null
+        throw err
       })
     return this.pcache.metadata
   }
@@ -275,10 +287,12 @@ class FimFic2Epub extends EventEmitter {
       }
       return this.processChapters(rawChapters)
     }).then(() => {
-      this.totalWordCount = this.storyInfo.chapters.reduce((count, ch) => count + ch.realWordCount, 0)
+      this.totalWordCount = this.storyInfo.chapters.reduce((count, ch) => count + (ch.realWordCount || 0), 0)
       this.pcache.chapters = null
-    }).catch((err) => {
-      console.error(err)
+    }, (err) => {
+      this.pcache.chapters = null
+      this.chapters.length = 0
+      throw err
     })
 
     return this.pcache.chapters
@@ -621,9 +635,6 @@ class FimFic2Epub extends EventEmitter {
         this.cachedFile = file
         return file
       })
-      .catch((err) => {
-        console.error(err)
-      })
   }
 
   // example usage: .pipe(fs.createWriteStream(filename))
@@ -934,9 +945,10 @@ class FimFic2Epub extends EventEmitter {
           const ourl = new RegExp(escapeStringRegexp(r.originalUrl), 'g')
           for (let i = 0; i < r.where.length; i++) {
             const w = r.where[i]
-            if (typeof w === 'number') {
-              if (ourl.test(this.chapters[w])) {
-                this.storyInfo.chapters[w].remote = true
+            ourl.lastIndex = 0
+            if (typeof w === 'object' && w.chapter !== undefined && this.chaptersHtml[w.chapter]) {
+              if (ourl.test(this.chaptersHtml[w.chapter])) {
+                this.storyInfo.chapters[w.chapter].remote = true
               }
             } else if (w === 'titlepage') {
               if (ourl.test(this.pages.title)) {

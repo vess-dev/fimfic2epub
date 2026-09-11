@@ -28,8 +28,9 @@ function chapterBars (chapters, currentChapter = -1, highlightCurrent = false) {
   let windowSize = 50
   let wordCounts = []
   const highestWordCount = chapters.reduce((max, ch) => {
-    wordCounts.push(ch.realWordCount)
-    if (ch.realWordCount > max) return ch.realWordCount
+    const count = ch.realWordCount || 0
+    wordCounts.push(count)
+    if (count > max) return count
     return max
   }, 0)
   if (wordCounts.length > windowSize && currentChapter >= 0 && currentChapter < wordCounts.length) {
@@ -40,7 +41,7 @@ function chapterBars (chapters, currentChapter = -1, highlightCurrent = false) {
     wordCounts.length = Math.min(wordCounts.length, windowSize)
     currentChapter -= start
   }
-  wordCounts = wordCounts.map((c) => c / highestWordCount)
+  wordCounts = wordCounts.map((c) => (highestWordCount > 0 ? c / highestWordCount : 0))
   const barWidth = 9
   const barSpacing = 2
   const rowSpacing = 9
@@ -137,6 +138,17 @@ function sortSpineItems (items) {
   return items
 }
 
+function escapeXml (value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+// <meta> is a void element in HTML, so the renderer drops its content; in the
+// OPF package document it carries text, so emit it as raw XML.
+function opfMeta (attrs, content) {
+  const attributes = Object.keys(attrs).map((name) => ' ' + name + '="' + escapeXml(attrs[name]) + '"').join('')
+  return m.trust('<meta' + attributes + '>' + escapeXml(content) + '</meta>')
+}
+
 export function createOpf (ffc) {
   const remotes = []
   // let remoteCounter = 0
@@ -202,14 +214,14 @@ export function createOpf (ffc) {
         m('dc:identifier#BookId', ffc.storyInfo.uuid),
         m('dc:title', ffc.storyInfo.title),
         m('dc:creator#cre', ffc.storyInfo.author.name),
-        m('meta', { refines: '#cre', property: 'role', scheme: 'marc:relators' }, 'aut'),
+        opfMeta({ refines: '#cre', property: 'role', scheme: 'marc:relators' }, 'aut'),
         m('dc:date', new Date((ffc.storyInfo.publishDate || ffc.storyInfo.date_modified) * 1000).toISOString().substring(0, 10)),
         m('dc:publisher', 'Fimfiction'),
         ffc.storyInfo.short_description ? m('dc:description', ffc.storyInfo.short_description) : null,
         m('dc:source', ffc.storyInfo.url),
         m('dc:language', 'en'),
         ffc.coverImage ? m('meta', { name: 'cover', content: 'cover' }) : null,
-        m('meta', { property: 'dcterms:modified' }, new Date(ffc.storyInfo.date_modified * 1000).toISOString().replace('.000', ''))
+        opfMeta({ property: 'dcterms:modified' }, new Date(ffc.storyInfo.date_modified * 1000).toISOString().replace('.000', ''))
       ].concat(subjects.map((s) =>
         m('dc:subject', s)
       ), m('meta', { name: 'fimfic2epub version', content: FIMFIC2EPUB_VERSION }))),
@@ -299,7 +311,7 @@ export function createNav (ffc) {
   ))
   const prettyList = ffc.storyInfo.chapters.map((ch, num) =>
     m('li.item', [
-      m('.floatbox', m('span.wordcount', ch.realWordCount.toLocaleString('en-GB'))),
+      m('.floatbox', m('span.wordcount', (ch.realWordCount || 0).toLocaleString('en-GB'))),
       m('a', { href: 'Text/chapter_' + zeroFill(3, num + 1) + '.xhtml' }, ch.title),
       m('span.date', [m('b', ' · '), prettyDate(new Date(ch.date_modified * 1000))])
     ])
@@ -438,6 +450,7 @@ export function createTitlePage (ffc) {
     complete: 'check',
     incomplete: 'pencil',
     hiatus: 'pause',
+    'on hiatus': 'pause',
     cancelled: 'ban'
   }
 

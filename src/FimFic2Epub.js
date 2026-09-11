@@ -6,13 +6,13 @@ import sanitize from 'sanitize-filename'
 import isNode from 'detect-node'
 import { fileTypeFromBuffer } from 'file-type'
 import isSvg from 'is-svg'
-import sizeOf from 'image-size'
 import EventEmitter from 'events'
 import { buf as crc32 } from 'crc-32'
 
 import { cleanMarkup } from './cleanMarkup'
 import fetch from './fetch'
 import fetchRemote from './fetchRemote'
+import imageSize from './imageSize'
 import * as template from './templates'
 import { styleCss, coverstyleCss, titlestyleCss, iconsCss, navstyleCss, paragraphsCss } from './styles'
 import * as utils from './utils'
@@ -591,15 +591,24 @@ class FimFic2Epub extends EventEmitter {
   }
 
   async setCoverImage (buffer) {
-    buffer = isNode ? buffer : Buffer.from(new Uint8Array(buffer))
-    const info = await FileType.fromBuffer(buffer)
+    buffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer)
+    let info = await fileTypeFromBuffer(buffer)
+    if ((!info || info.mime === 'application/xml') && isSvg(buffer.toString('utf8'))) {
+      info = { mime: 'image/svg+xml', ext: 'svg' }
+    }
     if (!info || !info.mime.startsWith('image/')) {
       throw new Error('Invalid image')
     }
     this.coverImage = buffer
     this.coverFilename = 'Images/cover.' + info.ext
     this.coverType = info.mime
-    this.coverImageDimensions = sizeOf(Buffer.from(buffer))
+    const dimensions = imageSize(buffer)
+    if (dimensions) {
+      this.coverImageDimensions = { width: dimensions.width, height: dimensions.height }
+    } else {
+      console.warn('Unable to read the dimensions of the cover image')
+      this.coverImageDimensions = { width: 0, height: 0 }
+    }
     return this.coverImage
   }
 
@@ -740,30 +749,17 @@ class FimFic2Epub extends EventEmitter {
 
     this.progress(0, 0, 'Fetching cover image...')
 
-    this.pcache.coverImage = fetchRemote(url, 'arraybuffer').then(async (data) => {
-      data = isNode ? data : new Uint8Array(data)
-      const info = await FileType.fromBuffer(data)
-      if (info) {
-        const type = info.mime
-        const isImage = type.startsWith('image/')
-        if (!isImage) {
-          return null
-        }
-        const filename = 'Images/cover.' + info.ext
-        this.coverFilename = filename
-        this.coverType = type
-
-        this.coverImageDimensions = sizeOf(Buffer.from(data))
-        this.coverImage = data
-        this.coverFilename = filename
-        return this.coverImage
-      } else {
+    this.pcache.coverImage = fetchRemote(url, 'arraybuffer')
+      .then((data) => this.setCoverImage(data))
+      .catch((err) => {
+        console.warn('Unable to use the cover image ' + url + ' (' + (err && err.message ? err.message : err) + ')')
+        this.coverImage = null
         return null
-      }
-    }).then((data) => {
-      this.pcache.coverImage = null
-      return data
-    })
+      })
+      .then((data) => {
+        this.pcache.coverImage = null
+        return data
+      })
     return this.pcache.coverImage
   }
 

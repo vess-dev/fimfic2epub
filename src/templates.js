@@ -227,7 +227,7 @@ export function createOpf (ffc) {
 
         ffc.iconsFont ? m('item', { id: 'font-awesome', href: 'Fonts/fontawesome-webfont-subset.ttf', 'media-type': 'font/ttf' }) : null,
 
-        m('item', { id: 'coverpage', href: 'Text/cover.xhtml', 'media-type': 'application/xhtml+xml', properties: ffc.coverImage ? 'svg' : undefined }),
+        m('item', { id: 'coverpage', href: 'Text/cover.xhtml', 'media-type': 'application/xhtml+xml', properties: coverUsesSvg(ffc) ? 'svg' : undefined }),
         m('item', { id: 'titlepage', href: 'Text/title.xhtml', 'media-type': 'application/xhtml+xml', properties: ffc.hasRemoteResources.titlePage ? 'remote-resources' : null })
 
       ].concat(manifestChapters, manifestNotes, remotes)),
@@ -357,14 +357,26 @@ export function createNotesNav (ffc) {
   })
 }
 
+// The cover image is wrapped in an SVG so it scales nicely, which requires its dimensions
+function coverUsesSvg (ffc) {
+  const { width, height } = ffc.coverImageDimensions || {}
+  return !!ffc.coverImage && width > 0 && height > 0
+}
+
 export function createCoverPage (ffc) {
   let body
 
   const { width, height } = ffc.coverImageDimensions
+  const useSvg = coverUsesSvg(ffc)
 
-  if (ffc.coverImage) {
+  if (useSvg) {
     body = m('svg#cover', { xmlns: NS.SVG, 'xmlns:xlink': NS.XLINK, version: '1.1', viewBox: '0 0 ' + width + ' ' + height },
-      m('image', { width: width, height: height, 'xlink:href': '../' + ffc.coverFilename })
+      m('image', { width, height, 'xlink:href': '../' + ffc.coverFilename })
+    )
+  } else if (ffc.coverImage) {
+    // dimensions unknown, let the reading system scale the image
+    body = m('div', { style: 'text-align: center; height: 100%;' },
+      m('img#cover-image', { src: '../' + ffc.coverFilename, alt: 'Cover', style: 'max-width: 100%; max-height: 100%;' })
     )
   } else {
     body = [
@@ -378,7 +390,7 @@ export function createCoverPage (ffc) {
       m('head', [
         m('meta', { charset: 'utf-8' }),
         metaGenerator(),
-        ffc.coverImage ? m('meta', { name: 'viewport', content: 'width=' + width + ', height=' + height }) : null,
+        useSvg ? m('meta', { name: 'viewport', content: 'width=' + width + ', height=' + height }) : null,
         m('title', 'Cover'),
         m('link', { rel: 'stylesheet', type: 'text/css', href: '../Styles/coverstyle.css' })
       ]),

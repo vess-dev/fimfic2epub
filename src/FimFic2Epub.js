@@ -1,4 +1,3 @@
-
 import JSZip from 'jszip'
 import escapeStringRegexp from 'escape-string-regexp'
 import zeroFill from 'zero-fill'
@@ -406,7 +405,7 @@ class FimFic2Epub extends EventEmitter {
         showDuration: this.options.showChapterDuration,
         link: this.options.addCommentsLink ? ch.link : null,
         linkNotes: this.options.includeAuthorNotes && this.options.useAuthorNotesIndex && chapter.notes ? 'note_' + zeroFill(3, i + 1) + '.xhtml' : null,
-        content: content,
+        content,
         notes: this.options.includeAuthorNotes && !this.options.useAuthorNotesIndex ? chapter.notes : '',
         notesFirst: chapter.notesFirst,
         index: i
@@ -640,7 +639,7 @@ class FimFic2Epub extends EventEmitter {
         filename = 'emoticon_' + emoticon[1]
       }
       remoteCounter++
-      this.remoteResources.set(cleanurl, { filename: filename, where: [where], originalUrl: url })
+      this.remoteResources.set(cleanurl, { filename, where: [where], originalUrl: url })
     }
   }
 
@@ -877,7 +876,7 @@ class FimFic2Epub extends EventEmitter {
       this.remoteResources.forEach((r, url) => {
         if (r.originalUrl && r.where) {
           const ourl = new RegExp(escapeStringRegexp(r.originalUrl), 'g')
-          for (var i = 0; i < r.where.length; i++) {
+          for (let i = 0; i < r.where.length; i++) {
             const w = r.where[i]
             if (typeof w === 'number') {
               if (ourl.test(this.chapters[w])) {
@@ -896,7 +895,7 @@ class FimFic2Epub extends EventEmitter {
         if (r.dest && r.originalUrl && r.where) {
           const dest = '../' + r.dest
           const ourl = new RegExp(escapeStringRegexp(r.originalUrl), 'g')
-          for (var i = 0; i < r.where.length; i++) {
+          for (let i = 0; i < r.where.length; i++) {
             const w = r.where[i]
             if (typeof w === 'object' && w.chapter !== undefined && this.chaptersHtml[w.chapter]) {
               this.chaptersHtml[w.chapter] = this.chaptersHtml[w.chapter].replace(ourl, dest)

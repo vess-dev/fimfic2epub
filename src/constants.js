@@ -1,4 +1,3 @@
-
 export const NS = {
   OPF: 'http://www.idpf.org/2007/opf',
   OPS: 'http://www.idpf.org/2007/ops',

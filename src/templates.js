@@ -71,9 +71,11 @@ export function createChapter (ffc, ch, isNotesChapter) {
 
   const sections = [
     m.trust(content || ''),
-    notes ? m('div#author_notes', { className: notesFirst ? 'top' : 'bottom' }, [
-      m('p', m('b', 'Author\'s Note:')),
-      m.trust(notes)]) : null
+    notes
+      ? m('div#author_notes', { className: notesFirst ? 'top' : 'bottom' }, [
+        m('p', m('b', 'Author\'s Note:')),
+        m.trust(notes)])
+      : null
   ]
 
   // if author notes are a the beginning of the chapter
@@ -90,20 +92,26 @@ export function createChapter (ffc, ch, isNotesChapter) {
         m('title', title)
       ]),
       m('body', { 'epub:type': 'bodymatter chapter' }, m('div', [
-        showHeadings ? m('.chapter-title', [
-          !isNotesChapter && (showDuration || showWordCount) ? m('aside.info',
-            showDuration ? m('span.label', ffc.options.wordsPerMinute ? calcReadingTime(ffc, ffc.storyInfo.chapters[index].realWordCount) : '') : null,
-            showWordCount ? m('span.label', ffc.storyInfo.chapters[index].realWordCount.toLocaleString('en-GB') + ' words') : null
-          ) : null,
-          m('header', m('h1', title)),
-          m('hr.old')
-        ]) : null,
+        showHeadings
+          ? m('.chapter-title', [
+            !isNotesChapter && (showDuration || showWordCount)
+              ? m('aside.info',
+                showDuration ? m('span.label', ffc.options.wordsPerMinute ? calcReadingTime(ffc, ffc.storyInfo.chapters[index].realWordCount) : '') : null,
+                showWordCount ? m('span.label', (ffc.storyInfo.chapters[index].realWordCount || 0).toLocaleString('en-GB') + ' words') : null
+              )
+              : null,
+            m('header', m('h1', title)),
+            m('hr.old')
+          ])
+          : null,
         ...sections,
-        (link || linkNotes || isNotesChapter) ? m('p.double', { style: 'text-align: center; clear: both;' },
-          link ? m('a.chaptercomments', { href: link + '#comment_list' }, 'Read chapter comments online') : null,
-          linkNotes ? m('a.chaptercomments', { href: linkNotes }, 'Read author\'s note') : null,
-          isNotesChapter ? m('a.chaptercomments', { href: './chapter_' + zeroFill(3, index + 1) + '.xhtml' }, 'Read chapter') : null
-        ) : null,
+        (link || linkNotes || isNotesChapter)
+          ? m('p.double', { style: 'text-align: center; clear: both;' },
+            link ? m('a.chaptercomments', { href: link + '#comment_list' }, 'Read chapter comments online') : null,
+            linkNotes ? m('a.chaptercomments', { href: linkNotes }, 'Read author\'s note') : null,
+            isNotesChapter ? m('a.chaptercomments', { href: './chapter_' + zeroFill(3, index + 1) + '.xhtml' }, 'Read chapter') : null
+          )
+          : null,
         !isNotesChapter && ffc.options.addChapterBars ? chapterBars(ffc.storyInfo.chapters, index) : null
       ]))
     ])
@@ -178,7 +186,7 @@ export function createOpf (ffc) {
     spineNotes.push(m('itemref', { idref: 'notesnav' }))
     ffc.chaptersWithNotes.forEach((num) => {
       const id = 'note_' + zeroFill(3, num + 1)
-      manifestNotes.push(m('item', { id: id, href: 'Text/' + id + '.xhtml', 'media-type': 'application/xhtml+xml' }))
+      manifestNotes.push(m('item', { id, href: 'Text/' + id + '.xhtml', 'media-type': 'application/xhtml+xml' }))
       spineNotes.push(m('itemref', { idref: id }))
     })
   }
@@ -442,11 +450,13 @@ export function createTitlePage (ffc) {
         )),
         m('.readlink', m('a', { href: ffc.storyInfo.url }, 'Story on Fimfiction')),
         // m('hr'),
-        ffc.storyInfo.prequel ? [m('div', [
-          m('br'),
-          'This story is a sequel to ',
-          m('a', { href: ffc.storyInfo.prequel.url }, ffc.storyInfo.prequel.title)
-        ]), m('hr.old')] : null,
+        ffc.storyInfo.prequel
+          ? [m('div', [
+              m('br'),
+              'This story is a sequel to ',
+              m('a', { href: ffc.storyInfo.prequel.url }, ffc.storyInfo.prequel.title)
+            ]), m('hr.old')]
+          : null,
         m('#description', tokenContent),
         m('.bottom', [
           m('section', { className: 'completed-status completed-status-' + ffc.storyInfo.status.toLowerCase() }, [

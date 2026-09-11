@@ -1,4 +1,3 @@
-
 import styleCss from './style/style'
 import coverstyleCss from './style/coverstyle'
 import titlestyleCss from './style/titlestyle'
